@@ -2,8 +2,9 @@
 
 import sys
 import socket
-import thread
+import _thread
 import re
+from datetime import datetime
 
 # DNSQuery class from http://code.activestate.com/recipes/491264-mini-fake-dns-server/
 class DNSQuery:
@@ -11,24 +12,24 @@ class DNSQuery:
         self.data=data
         self.domain=''
         
-        tipo = (ord(data[2]) >> 3) & 15   # Opcode bits
+        tipo = (data[2] >> 3) & 15   # Opcode bits
         if tipo == 0:                     # Standard query
             ini=12
-            lon=ord(data[ini])
+            lon=data[ini]
             while lon != 0:
-                self.domain+=data[ini+1:ini+lon+1]+'.'
+                self.domain+=data[ini+1:ini+lon+1].decode('ascii')+'.'
                 ini+=lon+1
-                lon=ord(data[ini])
+                lon=data[ini]
     
     def respuesta(self, ip):
-        packet=''
+        packet=b''
         if self.domain:
-            packet+=self.data[:2] + "\x81\x80"
-            packet+=self.data[4:6] + self.data[4:6] + '\x00\x00\x00\x00'   # Questions and Answers Counts
+            packet+=self.data[:2] + b'\x81\x80'
+            packet+=self.data[4:6] + self.data[4:6] + b'\x00\x00\x00\x00'   # Questions and Answers Counts
             packet+=self.data[12:]                                         # Original Domain Name Question
-            packet+='\xc0\x0c'                                             # Pointer to domain name
-            packet+='\x00\x01\x00\x01\x00\x00\x00\x3c\x00\x04'             # Response type, ttl and resource data length -> 4 bytes
-            packet+=str.join('',map(lambda x: chr(int(x)), ip.split('.'))) # 4bytes of IP
+            packet+=b'\xc0\x0c'                                             # Pointer to domain name
+            packet+=b'\x00\x01\x00\x01\x00\x00\x00\x3c\x00\x04'             # Response type, ttl and resource data length -> 4 bytes
+            packet+=str.join('',map(lambda x: chr(int(x)), ip.split('.'))).encode('latin') # 4bytes of IP
         return packet
 
 
@@ -36,7 +37,7 @@ class DNSQuery:
 def get_ip_address_by_domain(domain):
     ip_address = '127.0.0.1'
     domain = domain.rstrip('.')
-    if host_ip_map.has_key(domain):
+    if domain in host_ip_map:
         ip_address = host_ip_map[domain]
     else:
         list = socket.getaddrinfo(domain, 80)
@@ -47,32 +48,34 @@ def get_ip_address_by_domain(domain):
 
 
 def usage():
-    print ""
-    print "Usage:"
-    print ""
-    print "\t# SimpleDNSServer [hosts file]"
-    print ""
-    print "Description:"
-    print ""
-    print "\tSimpleDNSServer will redirect DNS query to local machine."
-    print ""
-    print "\tYou can optionally specify a hosts file to the command line:\n"
-    print "\t\t# SimpleDNSServer hosts\n"
-    print "\tThe ip address will be chosen prior to system hosts setting and remote dns query from local machine. \n"
-    print "\tIf SimpleDNSServer and the DNS setting machine are same, you should set an optional DNS server in the DNS setting to avoid DNS query failure caused by redirecting recursively.\n"
-    print ""
+    print("")
+    print("Usage:")
+    print("")
+    print("\t# SimpleDNSServer [hosts file]")
+    print("")
+    print("Description:")
+    print("")
+    print("\tSimpleDNSServer will redirect DNS query to local machine.")
+    print("")
+    print("\tYou can optionally specify a hosts file to the command line:\n")
+    print("\t\t# SimpleDNSServer hosts\n")
+    print("\tThe ip address will be chosen prior to system hosts setting and remote dns query from local machine. \n")
+    print("\tIf SimpleDNSServer and the DNS setting machine are same, you should set an optional DNS server in the DNS setting to avoid DNS query failure caused by redirecting recursively.\n")
+    print("")
     
     sys.exit(1)
 
-def query_and_send_back_ip(data, addr):
+def query_and_send_back_ip(data, addr, reqtime):
 	try:
 		p=DNSQuery(data)
-		print 'Request domain: %s' % p.domain
+		print('%s Request domain: %s from %s' % (reqtime.strftime("%H:%M:%S.%f"), p.domain, addr[0]))
 		ip = get_ip_address_by_domain(p.domain)
 		udps.sendto(p.respuesta(ip), addr)
-		print 'Request: %s -> %s' % (p.domain, get_ip_address_by_domain(p.domain))
-	except Exception, e:
-		print 'query for:%s error:%s' % (p.domain, e)
+		dis = datetime.now() - reqtime
+
+		print('%s Request from %s cost %s : %s -> %s' % (reqtime.strftime("%H:%M:%S.%f"), addr[0], dis.seconds + dis.microseconds/1000000, p.domain, get_ip_address_by_domain(p.domain)))
+	except Exception as e:
+		print('query for:%s error:%s' % (p.domain, e))
 
 def get_host_ip_map(hostsfile):
 	host_ip_map = {}
@@ -108,20 +111,20 @@ if __name__ == '__main__':
     try:
         udps = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         udps.bind(('',53))
-    except Exception, e:
-        print "Failed to create socket on UDP port 53:", e
+    except Exception as e:
+        print("Failed to create socket on UDP port 53:", e)
         sys.exit(1)
     
-    print 'SimpleDNSServer :: hosts file -> %s\n' % hostsfile
+    print('SimpleDNSServer :: hosts file -> %s\n' % hostsfile)
     
     try:
         while 1:
             data, addr = udps.recvfrom(1024)
-            thread.start_new_thread(query_and_send_back_ip, (data, addr))
+            _thread.start_new_thread(query_and_send_back_ip, (data, addr, datetime.now()))
     except KeyboardInterrupt:
-        print '\n^C, Exit!'
-    except Exception, e:
-        print '\nError: %s' % e
+        print('\n^C, Exit!')
+    except Exception as e:
+        print('\nError: %s' % e)
     finally:
         udps.close()
 
